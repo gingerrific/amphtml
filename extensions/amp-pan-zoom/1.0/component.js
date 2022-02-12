@@ -1,10 +1,4 @@
-import {bezierCurve} from '#core/data-structures/curve';
-import {
-  scale as cssScale,
-  getStyle,
-  setStyles,
-  translate,
-} from '#core/dom/style';
+import {scale as cssScale, setStyles, translate} from '#core/dom/style';
 
 import * as Preact from '#preact';
 import {
@@ -15,32 +9,17 @@ import {
   useMemo,
   useReducer,
   useRef,
-  useState,
 } from '#preact';
 import {Children, forwardRef} from '#preact/compat';
 import {ContainWrapper} from '#preact/component';
 import {logger} from '#preact/logger';
 
+import {ACTION_TYPES, actions} from './actions';
 import {useStyles} from './component.jss';
-import {ACTIONS, initReducer, panZoomReducer} from './reducer';
-const PAN_ZOOM_CURVE_ = bezierCurve(0.4, 0, 0.2, 1.4);
-const TAG = 'amp-pan-zoom';
+import {initReducer, panZoomReducer} from './reducer';
+
 const DEFAULT_MAX_SCALE = 3;
 const DEFAULT_MIN_SCALE = 1;
-const DEFAULT_INITIAL_SCALE = 1;
-const MAX_ANIMATION_DURATION = 250;
-const DEFAULT_ORIGIN = 0;
-
-const ELIGIBLE_TAGS = new Set([
-  'svg',
-  'div',
-  'img',
-  // 'AMP-IMG',
-  // 'AMP-LAYOUT',
-  // 'AMP-SELECTOR',
-]);
-
-const useZoomAnimation = () => {};
 
 /**
  * @param {!BentoPanZoom.Props} props
@@ -50,10 +29,6 @@ const useZoomAnimation = () => {};
 export function BentoPanZoomWithRef(props, ref) {
   const {
     children,
-    controls,
-    initialScale = DEFAULT_INITIAL_SCALE,
-    initialX = DEFAULT_ORIGIN,
-    initialY = DEFAULT_ORIGIN,
     maxScale = DEFAULT_MAX_SCALE,
     onTransformEnd,
     resetOnResize,
@@ -66,7 +41,6 @@ export function BentoPanZoomWithRef(props, ref) {
   const containerRef = useRef(null);
 
   const [state, dispatch] = useReducer(panZoomReducer, props, initReducer);
-  const [mousePos, setMousePos] = useState({mousePosX: 0, mousePosY: 0});
 
   useEffect(() => {
     if (childrenArray.length !== 1) {
@@ -79,17 +53,15 @@ export function BentoPanZoomWithRef(props, ref) {
     if (!containerRef.current && !contentRef.current) {
       return;
     }
-
-    dispatch({
-      type: ACTIONS.INITIALIZE_BOUNDS,
-      payload: {
+    dispatch(
+      actions.initializeBoundaries({
         contentBox: containerRef.current./*REVIEW*/ getBoundingClientRect(),
         containerBox: contentRef.current./*REVIEW*/ getBoundingClientRect(),
-      },
-    });
+      })
+    );
   }, []);
 
-  useLayoutEffect(() => {
+  useEffect(() => {
     if (!containerRef.current && !contentRef.current) {
       return;
     }
@@ -102,32 +74,11 @@ export function BentoPanZoomWithRef(props, ref) {
 
   const handleZoomButtonClick = (e) => {
     if (!state.isZoomed) {
-      dispatch({type: ACTIONS.SET_IS_ZOOMED, payload: {isZoomed: true}});
-      dispatch({
-        type: ACTIONS.TRANSFORM,
-        payload: {x: 0, y: 0, scale: maxScale},
-      });
+      dispatch(actions.zoomIn({x: 0, y: 0, scale: maxScale}));
     } else {
-      dispatch({type: ACTIONS.SET_IS_ZOOMED, payload: {isZoomed: false}});
-      dispatch({
-        type: ACTIONS.TRANSFORM,
-        payload: {x: 0, y: 0, scale: DEFAULT_MIN_SCALE},
-      });
+      dispatch(actions.zoomOut({x: 0, y: 0, scale: DEFAULT_MIN_SCALE}));
     }
   };
-
-  // const resetContentDimensions = () => {
-  //   dispatch({type: ACTIONS.CLEAR_DIMENSIONS});
-  // };
-
-  // const setContentBoxOffsets = () => {
-  //   dispatch({
-  //     type: ACTIONS.SET_CONTENT_BOX_OFFSETS,
-  //     payload: {
-  //       contentBox: containerRef.current./*REVIEW*/ getBoundingClientRect(),
-  //     },
-  //   });
-  // };
 
   const onMouseMove = useCallback(
     (e) => {
@@ -139,51 +90,51 @@ export function BentoPanZoomWithRef(props, ref) {
       }
 
       const {clientX, clientY} = e;
-      const deltaX = clientX - mousePos.mousePosX;
-      const deltaY = clientY - mousePos.mousePosY;
+      const deltaX = clientX - state.mousePosX;
+      const deltaY = clientY - state.mousePosY;
 
-      dispatch({
-        type: ACTIONS.MOVE,
-        payload: {
-          posX: deltaX,
-          posY: deltaY,
-          element: contentRef.current,
-        },
-      });
+      dispatch(
+        actions.panContent({
+          deltaX,
+          deltaY,
+        })
+      );
     },
-    [mousePos.mousePosX, mousePos.mousePosY, state.isPannable]
+    [state.mousePosX, state.mousePosY, state.isPannable]
   );
 
-  const onMouseDown = useCallback((e) => {
-    // Return early for right click
-    if (e.button == 2) {
-      return;
-    }
+  const onMouseDown = useCallback(
+    (e) => {
+      // Return early for right click
+      if (e.button == 2 || !state.isZoomed) {
+        return;
+      }
 
-    e.preventDefault();
+      e.preventDefault();
 
-    const {clientX, clientY} = e;
+      const {clientX, clientY} = e;
+      dispatch(
+        actions.startPanning({
+          isPannable: true,
+          mousePosX: clientX,
+          mousePosY: clientY,
+        })
+      );
+    },
+    [state.isZoomed]
+  );
 
-    dispatch({type: ACTIONS.SET_IS_PANNABLE, payload: {isPannable: true}});
-    setMousePos({
-      mousePosX: clientX,
-      mousePosY: clientY,
-    });
-  }, []);
+  const onMouseUp = useCallback(
+    (e) => {
+      if (!state.isPannable) {
+        return;
+      }
+      e.preventDefault();
 
-  const onMouseUp = useCallback((e) => {
-    e.preventDefault();
-
-    const {clientX, clientY} = e;
-
-    dispatch({
-      type: ACTIONS.MOVE_RELEASE,
-      payload: {
-        posX: clientX,
-        posY: clientY,
-      },
-    });
-  }, []);
+      dispatch(actions.stopPanning);
+    },
+    [state.isPannable]
+  );
 
   useImperativeHandle(
     ref,
@@ -191,7 +142,7 @@ export function BentoPanZoomWithRef(props, ref) {
       /** @type {!BentoPanZoom.PanZoomApi} */ ({
         transform: (scale, x, y) => {
           dispatch({
-            type: ACTIONS.TRANSFORM,
+            type: ACTION_TYPES.TRANSFORM,
             payload: {
               scale,
               posX: x,
@@ -212,16 +163,14 @@ export function BentoPanZoomWithRef(props, ref) {
       {...rest}
       ref={containerRef}
       onMouseMove={onMouseMove}
+      onMouseDown={onMouseDown}
+      onMouseUp={onMouseUp}
+      onMouseLeave={onMouseUp}
       class={styles.ampPanZoom}
-      contentClassName={styles.ampPanZoomContent}
+      contentClassName={`${styles.ampPanZoomContent} ${showPanCursor}`}
       layout
     >
-      <div
-        ref={contentRef}
-        onMouseDown={onMouseDown}
-        onMouseUp={onMouseUp}
-        class={`${styles.ampPanZoomChild} ${showPanCursor}`}
-      >
+      <div ref={contentRef} class={`${styles.ampPanZoomChild}`}>
         {children}
       </div>
 
